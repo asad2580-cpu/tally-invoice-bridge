@@ -1,0 +1,13 @@
+# --- Tally communication ---
+requests==2.32.3          # used to POST/GET XML to/from Tally's local HTTP server
+
+# --- OCR & image handling (added in later steps, listed now for reference) ---
+pytesseract==0.3.13       # Python wrapper around the Tesseract OCR engine
+Pillow==10.4.0            # image loading, cropping, drawing bounding boxes
+opencv-python-headless==4.10.0.84   # image preprocessing to improve OCR accuracy
+
+# --- UI (added in later steps) ---
+customtkinter==5.2.2      # modern-looking desktop UI, beginner-friendly
+
+# --- Packaging (added in final step) ---
+pyinstaller==6.10.0       # bundles the app into a single .exe for distribution
