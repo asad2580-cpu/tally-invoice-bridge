@@ -31,7 +31,7 @@ class VendorPickerScreen(ctk.CTk):
         """
         super().__init__()
         self.title("Select Vendor")
-        self.geometry("420x420")
+        self.geometry("420x520")
         self.company_name = company_name
         self.on_vendor_selected = on_vendor_selected
 
