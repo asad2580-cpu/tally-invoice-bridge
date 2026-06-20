@@ -38,6 +38,7 @@ class FieldBox:
 @dataclass
 class VendorTemplate:
     vendor_key: str
+    party_ledger: str | None  # the Tally ledger this vendor maps to, e.g. "Sharma Traders"
     fields: dict[str, FieldBox]
     last_updated_utc: str  # ISO timestamp, set automatically on save
 
@@ -84,16 +85,26 @@ def _save_all_templates(all_templates: dict[str, dict]) -> bool:
         return False
 
 
-def save_template(vendor_key: str, fields: dict[str, FieldBox]) -> bool:
+def save_template(vendor_key: str, fields: dict[str, FieldBox], party_ledger: str | None = None) -> bool:
     """
     Saves (or overwrites) the template for a given vendor. Overwriting is
     intentional: when a user corrects a field, we want the new position
     to fully replace the old one, not merge ambiguously.
+
+    party_ledger is the real Tally ledger name this vendor maps to (e.g.
+    "Sharma Traders"). It's optional at save time so callers can save
+    field box progress before the party ledger has been picked, but the
+    app should treat a template as incomplete/unusable for pushing until
+    this is set.
     """
     all_templates = _load_all_templates()
 
+    existing = all_templates.get(vendor_key, {})
+    resolved_party_ledger = party_ledger if party_ledger is not None else existing.get("party_ledger")
+
     all_templates[vendor_key] = {
         "vendor_key": vendor_key,
+        "party_ledger": resolved_party_ledger,
         "fields": {name: asdict(box) for name, box in fields.items()},
         "last_updated_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -118,6 +129,7 @@ def load_template(vendor_key: str) -> VendorTemplate | None:
     }
     return VendorTemplate(
         vendor_key=raw["vendor_key"],
+        party_ledger=raw.get("party_ledger"),  # .get(), not [], for backward compatibility
         fields=fields,
         last_updated_utc=raw["last_updated_utc"],
     )

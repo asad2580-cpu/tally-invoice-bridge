@@ -12,19 +12,20 @@ print("=== Before saving anything ===")
 print("Known vendors:", list_known_vendors())
 print("Load (should be None):", load_template(VENDOR_KEY))
 
-print("\n=== Saving a template ===")
+print("\n=== Saving a template WITH party_ledger ===")
 fields = {
     "invoice_number": FieldBox(x0=276.8, x1=290.0, top=59.0, bottom=66.0),
     "date": FieldBox(x0=391.4, x1=430.0, top=59.0, bottom=66.0),
     "party_name": FieldBox(x0=38.8, x1=120.0, top=232.1, bottom=240.0),
     "total_amount": FieldBox(x0=470.0, x1=520.0, top=560.3, bottom=568.0),
 }
-success = save_template(VENDOR_KEY, fields)
+success = save_template(VENDOR_KEY, fields, party_ledger="Sharma Traders")
 print("Save success:", success)
 
 print("\n=== Loading it back ===")
 loaded = load_template(VENDOR_KEY)
 print("Vendor key:", loaded.vendor_key)
+print("Party ledger (should be 'Sharma Traders'):", loaded.party_ledger)
 print("Last updated:", loaded.last_updated_utc)
 for name, box in loaded.fields.items():
     print(f"  {name}: x0={box.x0}, top={box.top}")
@@ -32,11 +33,12 @@ for name, box in loaded.fields.items():
 print("\n=== Known vendors now ===")
 print(list_known_vendors())
 
-print("\n=== Simulating a correction (overwrite total_amount) ===")
+print("\n=== Simulating a field correction WITHOUT re-passing party_ledger ===")
 fields["total_amount"] = FieldBox(x0=475.0, x1=525.0, top=560.3, bottom=568.0)
-save_template(VENDOR_KEY, fields)
+save_template(VENDOR_KEY, fields)  # party_ledger omitted on purpose
 loaded_again = load_template(VENDOR_KEY)
 print("New total_amount x0:", loaded_again.fields["total_amount"].x0)
+print("Party ledger should STILL be 'Sharma Traders' (not wiped):", loaded_again.party_ledger)
 
 print("\n=== Deleting the template ===")
 print("Delete success:", delete_template(VENDOR_KEY))
