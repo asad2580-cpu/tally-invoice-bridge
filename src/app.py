@@ -9,7 +9,7 @@ Run this file to use the app, instead of running individual screens
 standalone (main_flow.py, review_screen_ui.py, etc. remain as useful
 test scripts, but app.py is the real product entry point going forward).
 """
-
+from company_picker_ui import pick_company_name
 import customtkinter as ctk
 from tkinter import filedialog, simpledialog
 
@@ -52,9 +52,9 @@ def ask_for_invoice_file() -> str | None:
 
 
 def run_app():
-    company_name = ask_for_company_name()
+    company_name = pick_company_name()
     if not company_name:
-        print("No company name entered. Exiting.")
+        print("Could not determine which company to use. Exiting.")
         return
 
     pdf_path = ask_for_invoice_file()

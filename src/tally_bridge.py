@@ -165,7 +165,67 @@ def get_ledger_names(company_name: str) -> LedgerFetchResult:
 
     return LedgerFetchResult(success=True, ledger_names=ledger_names)
 
+def get_open_company_names() -> LedgerFetchResult:
+    """
+    Returns the list of companies currently open in Tally. Reuses
+    LedgerFetchResult as the return type since the shape (success,
+    a list of strings, error_message) is identical — "ledger_names"
+    here just holds company names instead.
 
+    Note: Tally does not expose which open company is currently
+    ACTIVE/focused via this API — only which ones are open. If more
+    than one is open, the caller must ask the user to pick, rather
+    than guessing.
+    """
+    request_xml = """
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>EXPORT</TALLYREQUEST>
+    <TYPE>COLLECTION</TYPE>
+    <ID>List of Companies</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVISSIMPLECOMPANY>No</SVISSIMPLECOMPANY>
+      </STATICVARIABLES>
+    </DESC>
+  </BODY>
+</ENVELOPE>
+"""
+
+    response = _post_to_tally(request_xml)
+    if response is None:
+        return LedgerFetchResult(
+            success=False,
+            error_message="Could not connect to Tally. Make sure TallyPrime is open.",
+        )
+
+    if response.status_code != 200:
+        return LedgerFetchResult(
+            success=False,
+            error_message=f"Tally returned an unexpected HTTP status: {response.status_code}",
+        )
+
+    try:
+        root = ET.fromstring(response.text)
+    except ET.ParseError as e:
+        return LedgerFetchResult(success=False, error_message=f"Could not parse Tally's response: {e}")
+
+    company_names = [
+        company_element.get("NAME")
+        for company_element in root.iter("COMPANY")
+        if company_element.get("NAME")
+    ]
+
+    if not company_names:
+        return LedgerFetchResult(
+            success=False,
+            error_message="No companies are currently open in Tally. Please open a company first.",
+        )
+
+    return LedgerFetchResult(success=True, ledger_names=company_names)
 # ---------------------------------------------------------------------------
 # Public: validating ledgers before push
 # ---------------------------------------------------------------------------
