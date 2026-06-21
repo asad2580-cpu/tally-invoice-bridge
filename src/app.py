@@ -14,6 +14,7 @@ import customtkinter as ctk
 from tkinter import filedialog, simpledialog
 
 from invoice_text_extractor import extract_text_from_pdf
+from image_ocr_extractor import extract_text_from_image
 from vendor_picker_ui import VendorPickerScreen
 from vendor_template_store import load_template, save_template
 from box_labeling_ui import BoxLabelingScreen, render_pdf_page_as_image
@@ -39,8 +40,12 @@ def ask_for_invoice_file() -> str | None:
     root = ctk.CTk()
     root.withdraw()
     file_path = filedialog.askopenfilename(
-        title="Select an invoice PDF",
-        filetypes=[("PDF files", "*.pdf")],
+        title="Select an invoice (PDF or image)",
+        filetypes=[
+            ("Invoice files", "*.pdf *.jpg *.jpeg *.png"),
+            ("PDF files", "*.pdf"),
+            ("Image files", "*.jpg *.jpeg *.png"),
+        ],
     )
     root.destroy()
     return file_path if file_path else None
@@ -75,19 +80,57 @@ def run_app():
     picker = VendorPickerScreen(company_name=company_name, on_vendor_selected=on_vendor_selected)
     picker.mainloop()
 
+def load_invoice_page_and_image(file_path: str):
+    """
+    Given an invoice file (PDF or image), returns (page_data, pil_image,
+    coordinate_scale) using whichever extraction path is appropriate:
+    - PDF with a real text layer: pdfplumber extraction, rendered image
+      for display, with RENDER_SCALE conversion between pixel display
+      and PDF-point coordinates.
+    - PDF with no usable text layer (scanned), or a plain image file:
+      OCR extraction, where the image IS the coordinate space directly
+      (scale = 1.0, no conversion needed).
+
+    Returns (None, None, None) if extraction fails entirely.
+    """
+    lower_path = file_path.lower()
+
+    if lower_path.endswith(".pdf"):
+        pdf_result = extract_text_from_pdf(file_path)
+        if pdf_result.success and pdf_result.has_usable_text:
+            image = render_pdf_page_as_image(file_path, page_number=0, scale=2.0)
+            return pdf_result.pages[0], image, 2.0
+
+        # Fall back to OCR: render the PDF page as an image, then OCR it.
+        print("No usable text layer found in PDF \u2014 falling back to OCR.")
+        image = render_pdf_page_as_image(file_path, page_number=0, scale=2.0)
+        temp_image_path = file_path + "_ocr_temp.png"
+        image.save(temp_image_path)
+        ocr_result = extract_text_from_image(temp_image_path)
+        if ocr_result.success and ocr_result.page:
+            return ocr_result.page, image, 1.0
+        print("OCR fallback also failed:", ocr_result.error_message)
+        return None, None, None
+
+    else:
+        # Plain image file (jpg, png, etc.) \u2014 OCR directly, no scaling.
+        ocr_result = extract_text_from_image(file_path)
+        if not ocr_result.success or not ocr_result.page:
+            print("OCR failed:", ocr_result.error_message)
+            return None, None, None
+        from PIL import Image
+        image = Image.open(file_path)
+        return ocr_result.page, image, 1.0
+
 
 def open_labeling_screen(company_name: str, vendor_key: str, pdf_path: str):
-    extraction_result = extract_text_from_pdf(pdf_path)
-    if not extraction_result.success or not extraction_result.pages:
-        print("Could not extract PDF text:", extraction_result.error_message)
+    page_data, image, scale = load_invoice_page_and_image(pdf_path)
+    if page_data is None:
+        print("Could not extract invoice data from this file.")
         return
 
-    image = render_pdf_page_as_image(pdf_path, page_number=0, scale=2.0)
-    labeling_screen = BoxLabelingScreen(image, extraction_result.pages[0], vendor_key)
+    labeling_screen = BoxLabelingScreen(image, page_data, vendor_key, render_scale=scale)
 
-    # When the labeling window is closed, proceed to the review screen.
-    # CustomTkinter doesn't have a built-in "on close, do X" hook beyond
-    # the window protocol, so we use that directly.
     def on_labeling_closed():
         labeling_screen.destroy()
         open_review_screen(company_name, vendor_key, pdf_path)

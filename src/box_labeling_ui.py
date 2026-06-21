@@ -43,8 +43,9 @@ def render_pdf_page_as_image(pdf_path: str, page_number: int, scale: float) -> I
 
 
 class BoxLabelingScreen(ctk.CTk):
-    def __init__(self, pil_image: Image.Image, page_data, vendor_key: str):
+    def __init__(self, pil_image: Image.Image, page_data, vendor_key: str, render_scale: float = 2.0):
         super().__init__()
+        self.render_scale = render_scale
 
         self.title("Label Invoice Fields")
         self.page_data = page_data
@@ -121,8 +122,8 @@ class BoxLabelingScreen(ctk.CTk):
     def _redraw_existing_boxes(self):
         for field_name, box in self.field_boxes.items():
             rect_id = self.canvas.create_rectangle(
-                box.x0 * RENDER_SCALE, box.top * RENDER_SCALE,
-                box.x1 * RENDER_SCALE, box.bottom * RENDER_SCALE,
+                box.x0 * self.render_scale, box.top * self.render_scale,
+                box.x1 * self.render_scale, box.bottom * self.render_scale,
                 outline="green", width=2,
             )
             self.rectangle_ids[field_name] = rect_id
@@ -153,8 +154,8 @@ class BoxLabelingScreen(ctk.CTk):
         top, bottom = sorted([self.start_y, event.y])
 
         self.pending_pdf_box = Box(
-            x0=left / RENDER_SCALE, x1=right / RENDER_SCALE,
-            top=top / RENDER_SCALE, bottom=bottom / RENDER_SCALE,
+            x0=left / self.render_scale, x1=right / self.render_scale,
+            top=top / self.render_scale, bottom=bottom / self.render_scale,
         )
 
         captured_text = read_text_in_box(self.page_data, self.pending_pdf_box)
@@ -186,8 +187,8 @@ class BoxLabelingScreen(ctk.CTk):
         # Turn the just-confirmed box green, to visually distinguish
         # "saved" boxes from the in-progress red one.
         rect_id = self.canvas.create_rectangle(
-            self.pending_pdf_box.x0 * RENDER_SCALE, self.pending_pdf_box.top * RENDER_SCALE,
-            self.pending_pdf_box.x1 * RENDER_SCALE, self.pending_pdf_box.bottom * RENDER_SCALE,
+            self.pending_pdf_box.x0 * self.render_scale, self.pending_pdf_box.top * self.render_scale,
+            self.pending_pdf_box.x1 * self.render_scale, self.pending_pdf_box.bottom * self.render_scale,
             outline="green", width=2,
         )
         self.rectangle_ids[field_name] = rect_id

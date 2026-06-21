@@ -6,7 +6,7 @@ the assembled voucher clearly, checks for duplicate pushes, and only
 pushes on explicit user confirmation. Every outcome (pushed or not) is
 recorded via invoice_record_store for a durable audit trail.
 """
-
+from tally_bridge import push_voucher, LedgerLine
 import customtkinter as ctk
 from datetime import datetime, timezone
 
@@ -22,7 +22,7 @@ class ReviewScreen(ctk.CTk):
     def __init__(self, company_name: str, vendor_key: str, pdf_path: str, on_edit_template=None):
         super().__init__()
         self.title("Review Before Push")
-        self.geometry("520x720")
+        self.geometry("520x780")
 
         self.company_name = company_name
         self.vendor_key = vendor_key
@@ -69,19 +69,21 @@ class ReviewScreen(ctk.CTk):
         self.after(100, self._process_invoice)
 
     def _process_invoice(self):
-        extraction_result = extract_text_from_pdf(self.pdf_path)
-        if not extraction_result.success or not extraction_result.pages:
-            self.status_label.configure(
-                text=f"Extraction failed: {extraction_result.error_message}", text_color="red",
-            )
+        from app import load_invoice_page_and_image
+        page_data, _, _ = load_invoice_page_and_image(self.pdf_path)
+        if page_data is None:
+            self.status_label.configure(text="Could not extract invoice data.", text_color="red")
             return
 
         try:
             self.voucher = assemble_purchase_voucher(
-                self.company_name, self.vendor_key, extraction_result.pages[0],
+                self.company_name, self.vendor_key, page_data,
             )
         except AssemblyError as e:
             self.status_label.configure(text=f"Could not assemble voucher: {e}", text_color="red")
+            return
+        except Exception as e:
+            self.status_label.configure(text=f"Unexpected error: {e}", text_color="red")
             return
 
         self.status_label.configure(text="Ready for review", text_color="gray")
@@ -97,20 +99,35 @@ class ReviewScreen(ctk.CTk):
     def _render_voucher_details(self):
         v = self.voucher
 
-        def add_row(label, value):
+        # Editable fields. We keep references to each Entry widget so we
+        # can read back the (possibly corrected) values at push time.
+        self.date_entry = None
+        self.narration_entry = None
+        self.line_entries: list[tuple[ctk.CTkEntry, bool, str]] = []  # (entry, is_debit, ledger_name)
+
+        def add_label_row(label, value):
             row = ctk.CTkFrame(self.details_frame, fg_color="transparent")
             row.pack(fill="x", pady=2)
             ctk.CTkLabel(row, text=label, width=140, anchor="w", text_color="gray").pack(side="left")
             ctk.CTkLabel(row, text=str(value), anchor="w").pack(side="left")
 
-        add_row("Company:", v.company_name)
-        add_row("Voucher type:", v.voucher_type)
-        add_row("Date:", v.voucher_date_yyyymmdd)
-        add_row("Party:", v.party_ledger_name)
-        add_row("Narration:", v.narration)
+        def add_editable_row(label, initial_value):
+            row = ctk.CTkFrame(self.details_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=label, width=140, anchor="w", text_color="gray").pack(side="left")
+            entry = ctk.CTkEntry(row, width=200)
+            entry.insert(0, str(initial_value))
+            entry.pack(side="left")
+            return entry
+
+        add_label_row("Company:", v.company_name)
+        add_label_row("Voucher type:", v.voucher_type)
+        self.date_entry = add_editable_row("Date (YYYYMMDD):", v.voucher_date_yyyymmdd)
+        add_label_row("Party:", v.party_ledger_name)
+        self.narration_entry = add_editable_row("Narration:", v.narration)
 
         ctk.CTkLabel(
-            self.details_frame, text="\nLedger entries:", anchor="w",
+            self.details_frame, text="\nLedger entries (amounts editable):", anchor="w",
             font=ctk.CTkFont(weight="bold"),
         ).pack(fill="x", pady=(10, 5))
 
@@ -119,17 +136,54 @@ class ReviewScreen(ctk.CTk):
             row = ctk.CTkFrame(self.details_frame, fg_color="transparent")
             row.pack(fill="x", pady=2)
             ctk.CTkLabel(row, text=side, width=30, anchor="w").pack(side="left")
-            ctk.CTkLabel(row, text=line.ledger_name, width=220, anchor="w").pack(side="left")
-            ctk.CTkLabel(row, text=f"{line.amount:,.2f}", anchor="e").pack(side="left")
+            ctk.CTkLabel(row, text=line.ledger_name, width=200, anchor="w").pack(side="left")
+            amount_entry = ctk.CTkEntry(row, width=100)
+            amount_entry.insert(0, f"{line.amount:.2f}")
+            amount_entry.pack(side="left")
+            amount_entry.bind("<KeyRelease>", lambda e: self._update_balance_preview())
+            self.line_entries.append((amount_entry, line.is_debit, line.ledger_name))
 
-        total_dr = sum(l.amount for l in v.lines if l.is_debit)
-        total_cr = sum(l.amount for l in v.lines if not l.is_debit)
-        balance_note = "Balanced \u2713" if total_dr == total_cr else "NOT BALANCED \u2717"
-        balance_color = "green" if total_dr == total_cr else "red"
+        self.balance_preview_label = ctk.CTkLabel(
+            self.details_frame, text="", font=ctk.CTkFont(weight="bold"),
+        )
+        self.balance_preview_label.pack(fill="x", pady=(10, 0))
+        self._update_balance_preview()
+
         ctk.CTkLabel(
-            self.details_frame, text=f"\nDr {total_dr:,.2f}  /  Cr {total_cr:,.2f}   {balance_note}",
-            text_color=balance_color, font=ctk.CTkFont(weight="bold"),
-        ).pack(fill="x", pady=(5, 0))
+            self.details_frame,
+            text="\nOriginal captured text (for reference):",
+            anchor="w", font=ctk.CTkFont(size=11, weight="bold"), text_color="gray",
+        ).pack(fill="x", pady=(15, 2))
+        for field_name, raw_text in v.field_raw_text.items():
+            ctk.CTkLabel(
+                self.details_frame, text=f"{field_name}: '{raw_text}'",
+                anchor="w", font=ctk.CTkFont(size=11), text_color="gray",
+            ).pack(fill="x")
+
+    def _get_current_amounts(self) -> list[float]:
+        amounts = []
+        for entry, _, _ in self.line_entries:
+            try:
+                amounts.append(float(entry.get().strip()))
+            except ValueError:
+                amounts.append(0.0)
+        return amounts
+
+    def _update_balance_preview(self):
+        total_dr = sum(
+            amt for amt, (_, is_debit, _) in zip(self._get_current_amounts(), self.line_entries)
+            if is_debit
+        )
+        total_cr = sum(
+            amt for amt, (_, is_debit, _) in zip(self._get_current_amounts(), self.line_entries)
+            if not is_debit
+        )
+        balanced = abs(total_dr - total_cr) < 0.01  # tolerate tiny float rounding
+        note = "Balanced \u2713" if balanced else "NOT BALANCED \u2717"
+        color = "green" if balanced else "red"
+        self.balance_preview_label.configure(
+            text=f"Dr {total_dr:,.2f}  /  Cr {total_cr:,.2f}   {note}", text_color=color,
+        )
 
     def _check_for_duplicate(self):
         invoice_number = self.voucher.field_raw_text.get("Invoice Number", "").strip()
@@ -159,14 +213,37 @@ class ReviewScreen(ctk.CTk):
             )
             return
 
-        v = self.voucher
+        # Read back the (possibly user-corrected) values from the form,
+        # rather than the originally-assembled voucher object.
+        edited_date = self.date_entry.get().strip()
+        edited_narration = self.narration_entry.get().strip()
+
+        edited_lines = []
+        for entry, is_debit, ledger_name in self.line_entries:
+            try:
+                amount = float(entry.get().strip())
+            except ValueError:
+                self.result_label.configure(
+                    text=f"Invalid amount for '{ledger_name}' \u2014 push cancelled.", text_color="red",
+                )
+                return
+            edited_lines.append(LedgerLine(ledger_name=ledger_name, amount=amount, is_debit=is_debit))
+
+        total_dr = sum(l.amount for l in edited_lines if l.is_debit)
+        total_cr = sum(l.amount for l in edited_lines if not l.is_debit)
+        if abs(total_dr - total_cr) >= 0.01:
+            self.result_label.configure(
+                text="Voucher does not balance \u2014 fix the amounts before pushing.", text_color="red",
+            )
+            return
+
         push_result = push_voucher(
-            company_name=v.company_name,
-            voucher_type=v.voucher_type,
-            voucher_date_yyyymmdd=v.voucher_date_yyyymmdd,
-            party_ledger_name=v.party_ledger_name,
-            lines=v.lines,
-            narration=v.narration,
+            company_name=self.company_name,
+            voucher_type=self.voucher.voucher_type,
+            voucher_date_yyyymmdd=edited_date,
+            party_ledger_name=self.voucher.party_ledger_name,
+            lines=edited_lines,
+            narration=edited_narration,
         )
 
         record_id = make_record_id(self.company_name, self.vendor_key, invoice_number or "unknown")
@@ -175,11 +252,11 @@ class ReviewScreen(ctk.CTk):
             company_name=self.company_name,
             vendor_key=self.vendor_key,
             invoice_number=invoice_number or "unknown",
-            voucher_date_yyyymmdd=v.voucher_date_yyyymmdd,
-            party_ledger_name=v.party_ledger_name,
-            narration=v.narration,
-            lines=[{"ledger_name": l.ledger_name, "amount": l.amount, "is_debit": l.is_debit} for l in v.lines],
-            field_raw_text=v.field_raw_text,
+            voucher_date_yyyymmdd=edited_date,
+            party_ledger_name=self.voucher.party_ledger_name,
+            narration=edited_narration,
+            lines=[{"ledger_name": l.ledger_name, "amount": l.amount, "is_debit": l.is_debit} for l in edited_lines],
+            field_raw_text=self.voucher.field_raw_text,
             extracted_at_utc=datetime.now(timezone.utc).isoformat(),
             push_status="pushed_success" if push_result.success else "pushed_failed",
             pushed_at_utc=datetime.now(timezone.utc).isoformat(),

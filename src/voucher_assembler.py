@@ -90,8 +90,13 @@ def _convert_field_date_to_yyyymmdd(raw_date_text: str) -> str:
     """
     from datetime import datetime
 
-    raw_date_text = raw_date_text.strip()
-    known_formats = ["%d-%b-%y", "%d-%b-%Y", "%d/%m/%Y", "%d-%m-%Y"]
+    raw_date_text = raw_date_text.strip().rstrip(",.")
+    known_formats = [
+        "%d-%b-%y", "%d-%b-%Y",   # 1-Jun-26, 1-Jun-2026
+        "%d/%m/%Y", "%d-%m-%Y",   # 1/6/2026, 1-6-2026 (day-first)
+        "%m/%d/%Y", "%m-%d-%Y",   # 6/1/2026, 6-1-2026 (month-first, US style)
+    ]
+
 
     for fmt in known_formats:
         try:
@@ -147,7 +152,10 @@ def assemble_purchase_voucher(
     raw_date = field_raw_text.get("Date", "").strip()
     if not raw_date:
         raise AssemblyError("Date field box was not labeled, or captured no text.")
-    voucher_date = _convert_field_date_to_yyyymmdd(raw_date)
+    try:
+        voucher_date = _convert_field_date_to_yyyymmdd(raw_date)
+    except ValueError as e:
+        raise AssemblyError(str(e))
 
     # --- Amount fields → LedgerLine objects ---
     lines: list[LedgerLine] = []
@@ -161,7 +169,10 @@ def assemble_purchase_voucher(
             # weren't boxed/found, rather than erroring.
             continue
 
-        amount = parse_amount_text(raw_text)
+        try:
+            amount = parse_amount_text(raw_text)
+        except ValueError as e:
+            raise AssemblyError(f"Could not parse amount for '{box_field_name}': {e}")
         ledger_name = company_mapping[mappable_field_name]
 
         lines.append(LedgerLine(
