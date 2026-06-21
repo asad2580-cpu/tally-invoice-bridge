@@ -19,22 +19,31 @@ from invoice_record_store import (
 
 
 class ReviewScreen(ctk.CTk):
-    def __init__(self, company_name: str, vendor_key: str, pdf_path: str):
+    def __init__(self, company_name: str, vendor_key: str, pdf_path: str, on_edit_template=None):
         super().__init__()
         self.title("Review Before Push")
-        self.geometry("520x680")
+        self.geometry("520x720")
 
         self.company_name = company_name
         self.vendor_key = vendor_key
         self.pdf_path = pdf_path
         self.voucher = None
+        self.on_edit_template = on_edit_template
 
         ctk.CTkLabel(
             self, text="Review Voucher", font=ctk.CTkFont(size=18, weight="bold"),
         ).pack(pady=(20, 10))
 
         self.status_label = ctk.CTkLabel(self, text="Processing invoice...", text_color="gray")
-        self.status_label.pack(pady=(0, 10))
+        self.status_label.pack(pady=(0, 5))
+
+        if self.on_edit_template:
+            edit_button = ctk.CTkButton(
+                self, text="\u270e Edit Template for this Vendor", width=220,
+                fg_color="transparent", border_width=1,
+                command=self._on_edit_template_clicked,
+            )
+            edit_button.pack(pady=(0, 10))
 
         self.details_frame = ctk.CTkScrollableFrame(self, width=460, height=320)
         self.details_frame.pack(pady=5, padx=20, fill="x")
@@ -79,7 +88,12 @@ class ReviewScreen(ctk.CTk):
         self._render_voucher_details()
         self._check_for_duplicate()
         self.push_button.configure(state="normal")
-
+        
+    def _on_edit_template_clicked(self):
+        if self.on_edit_template:
+            self.destroy()
+            self.on_edit_template()
+            
     def _render_voucher_details(self):
         v = self.voucher
 
