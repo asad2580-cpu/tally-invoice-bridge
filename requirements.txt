@@ -11,3 +11,8 @@ customtkinter==5.2.2      # modern-looking desktop UI, beginner-friendly
 
 # --- Packaging (added in final step) ---
 pyinstaller==6.10.0       # bundles the app into a single .exe for distribution
+
+# --- PDF text extraction ---
+pdfplumber==0.11.4
+
+pytesseract==0.3.13
